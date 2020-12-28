@@ -80,13 +80,96 @@ for row in range(1, worksheet.nrows):
     # Append the dictionary representing the Hamiltonian to the list of 
     #Hamiltonians
     listOfHamiltonians.append(hamiltonian)
+    
+########################## Hamiltonian Reorganization #########################
+
+def findSubStrings(mainString,hamiltonian,checked=[]):
+    '''
+    Arguments: a Pauli string (e.g., "XZ"), a hamiltonian (with Pauli strings
+    as keys and their coefficients as values) and a list of 'checked' strings,
+    which have already been grouped.
+    Returns: a tuple (groupedOperators,checked). The former is a 
+    dictionary whose keys are boolean strings representing substrings of the
+    main one (e.g. if mainString="XZ", "IZ" would be represented as "01"). 
+    groupedOperators includes all the strings in the hamiltonian that are of 
+    this form, except for those that were in the 'checked' list passed as an 
+    argument, meaning that they are already part of another group of strings
+    that only differ by identities. checked, the second element in the 
+    returned tuple, is the same list passed as an argument, with extra values
+    (the strings that were grouped in this function call).
+    '''
+    
+    groupedOperators={}
+    
+    # Go through the keys in the dictionary representing the Hamiltonian that 
+    #haven't been grouped yet, and find those that only differ from mainString 
+    #by identities
+    for pauliString in hamiltonian:
+        
+        if pauliString not in checked:
+            # The string hasn't been grouped yet
+            
+            if(all((op1==op2 or op2=="I") \
+                   for op1,op2 in zip(mainString,pauliString))):
+                # The string only differs from mainString by identities
+                
+                # Represent the string as a substring of the main one
+                booleanString="".join([str(int(op1==op2)) for op1,op2 in \
+                                       zip(mainString,pauliString)])
+                    
+                # Add the boolean string representing this string as a key to 
+                #the dictionary of grouped operators, and associate its 
+                #coefficient as its value
+                groupedOperators[booleanString]=hamiltonian[pauliString]
+                
+                # Mark the string as grouped, so that it's not added to any 
+                #other group
+                checked.append(pauliString)
+                
+    return (groupedOperators,checked)
+
+def groupHamiltonian(hamiltonian):
+    '''
+    Arguments: a hamiltonian (with Pauli strings as keys and their coefficients 
+    as values).
+    Returns: groupedHamiltonian, a dictionary of subhamiltonians, each of 
+    which includes Pauli strings that only differ from each other by identities.
+    As such, the expectation values of all the strings in each subhamiltonian
+    can be calculated from the same measurement array.
+    The keys of groupedHamiltonian are the main strings. The values associated
+    to them are dictionaries whose keys are boolean strings representing 
+    substrings of the respective main string. The values are their 
+    coefficients.
+    '''
+    groupedHamiltonian={}
+    checked=[]
+    
+    # Go through the hamiltonian, starting by the terms that have less
+    #identity operators
+    for mainString in \
+        sorted(hamiltonian,key=lambda pauliString: pauliString.count("I")):
+            
+        # Call findSubStrings to find all the strings in the dictionary that 
+        #only differ from mainString by identities, and organize them as a 
+        #dictionary (groupedOperators)
+        groupedOperators,checked=findSubStrings(mainString,hamiltonian,checked)
+        
+        # Use the dictionary as a value for the mainString key in the 
+        #groupedHamiltonian dictionary
+        groupedHamiltonian[mainString]=groupedOperators
+        
+        # If all the strings have been grouped, exit the for cycle
+        if(len(checked)==len(hamiltonian.keys())):
+           break
+       
+    return(groupedHamiltonian)
 
 ############################## State Preparation ##############################
 
 def fromParametersToCoordinates(stateParameters):
     '''
-    Arguments: a list containing 6 parameters defining a normalized 2 qubit state, 
-    with the DoF corresponding to the global phase removed.
+    Arguments: a list containing 6 parameters defining a normalized 2 qubit, 
+    state, with the DoF corresponding to the global phase removed.
     Returns: a list containing the 4 complex coordinates of the state in the 
     computational basis.
     '''
@@ -215,13 +298,16 @@ def statePreparationGates(stateParameters,qubits,keepPhase=False):
 ##################### Experimental Expectation Estimation #####################
 
 
-def measureExpectation(pauliString,repetitions,stateParameters):
+def measureExpectation(mainString,subHamiltonian,repetitions,stateParameters):
     ''' 
-    Returns: the expectation value of a Pauli string, obtained by using the
+    Returns: the expectation value of subHamiltonian, obtained by using the
     CIRQ simulator.
-    Arguments: the Pauli string to be measured, the number of repetitions to be 
-    performed, the list of parameters defining the state in which to obtain the 
-    expectation value.
+    Arguments: the main Pauli string (that defines the circuit that will be 
+    used), subHamiltonian (a dictionary whose keys are boolean strings
+    representing substrings of the main one, and whose values are the 
+    respective coefficients), the number of repetitions to be performed, the 
+    list of parameters defining the state in which to obtain the expectation 
+    value.
     ''' 
     
     # Initialize qubits and circuit.
@@ -235,7 +321,7 @@ def measureExpectation(pauliString,repetitions,stateParameters):
     
     # Append necessary rotations and measurements for each qubit.
     for i in range(n):
-        op=pauliString[i]
+        op=mainString[i]
         
         # Rotate qubit i to the X basis if that's the desired measurement.
         if (op=="X"):
@@ -251,31 +337,63 @@ def measureExpectation(pauliString,repetitions,stateParameters):
             
     # Sample the desired number of repetitions from the circuit, unless
     #there are no measurements (identity term).
-    if (pauliString!="II"):
+    if (mainString!="II"):
         s=cirq.Simulator()
         results=s.run(circuit,repetitions=repetitions)
-        
-    # Calculate the expectation value of the Pauli string by averaging over  
-    #all the repetitions.
     
-    total=0
+    # For each substring, initialize the sum of all measurements as zero
+    total={}
+    for subString in subHamiltonian:
+        total[subString]=0
     
+    # Calculate the expectation value of each Pauli string by averaging over  
+    #all the repetitions
     for j in range(repetitions):
-        meas=1
-        for i in range(n):
-            if (pauliString[i]!="I"):
-                meas=meas*(1-2*results.data[i][j])
-        total+=meas
+        meas={}
         
-    expectationValue=total/repetitions
+        # Initialize the measurement in repetition j for all substrings
+        for subString in subHamiltonian:
+            meas[subString]=1
+        
+        # Go through the measurements on all the qubits
+        for i in range(n):
+            
+            if (mainString[i]!="I"):
+                # There's a measurement associated with this qubit
+                
+                # Use this single qubit measurement for the calculation of the
+                #measurement of each full substring in this repetition. If the
+                #substring has a "0" in the position corresponding to this
+                #qubit, the operator associated is I, and the measurement
+                #is ignored (raised to the power of 0)
+                for subString in subHamiltonian:
+                    meas[subString]=meas[subString]*((1-2*results.data[i][j])\
+                                                     **int(subString[i]))
+                        
+        # Add this measurement to the total, for each string
+        for subString in subHamiltonian:
+            total[subString]+=meas[subString]
+        
+    totalExpectationValue=0
     
-    return(expectationValue)
+    # Calculate the expectation value of the subHamiltonian, by multiplying
+    #the expectation value of each substring by the respective coefficient
+    for subString in subHamiltonian:
+        
+        # Get the expectation value of this substring by taking the average
+        #over all the repetitions
+        expectationValue=total[subString]/repetitions
+        
+        # Add this value to the total expectation value, weighed by its 
+        #coefficient
+        totalExpectationValue+=expectationValue*subHamiltonian[subString]
+    
+    return(totalExpectationValue)
 
 count=0
-optimizing=False
+trackOptimization=False
 
-def experimentalExpectationEstimation(stateParameters,pauliStringCoefficients\
-                                      ,repetitions):
+def experimentalExpectationEstimation(stateParameters,hamiltonian,repetitions):
     ''' 
     Returns: the experimental energy expectation in a given state.
     Arguments: a list of 6 parameters defining the state in which to obtain the 
@@ -287,29 +405,31 @@ def experimentalExpectationEstimation(stateParameters,pauliStringCoefficients\
     # Print the percentage of the maximum number of function evaluations that 
     #has been used so far in the classical optimization, if it's a multiple of
     #10% (to inform on the stage of the optimization process).
-    global count, optimizing
-    if(optimizing):
+    global count, trackOptimization
+    if(trackOptimization):
         if (count%(300/10)==0):
             print(round(count/(300/100)),"%",sep='')
         count=count+1
+
+    groupedHamiltonian=groupHamiltonian(hamiltonian)
 
     experimentalEnergyExpectation=0
     
     # Obtain experimental expectation value for each necessary Pauli string by
     #calling the measureExpectation function, and perform the necessary weighed
     #sum to obtain the energy expectation value.
-    for pauliString in pauliStringCoefficients:
+    for mainString in groupedHamiltonian:
          
-        expectationValue=measureExpectation(pauliString,repetitions,\
-                                       stateParameters)
-        experimentalEnergyExpectation +=\
-            pauliStringCoefficients[pauliString]*expectationValue
+        expectationValue=measureExpectation(mainString,\
+                                            groupedHamiltonian[mainString],\
+                                                repetitions,stateParameters)
+        experimentalEnergyExpectation+=expectationValue
 
     return experimentalEnergyExpectation
     
 ##################### Theoretical Expectation Estimation #####################
 
-def theoreticalExpectationEstimation(stateParameters,pauliStringCoefficients):
+def theoreticalExpectationEstimation(stateParameters,hamiltonian):
     ''' 
     Returns: the theoretical energy expectation in a given state.
     Arguments: a list with the 6 parameters defining the state in which to 
@@ -322,7 +442,7 @@ def theoreticalExpectationEstimation(stateParameters,pauliStringCoefficients):
     # Obtain the theoretical expectation value for each Pauli string in the
     #Hamiltonian by matrix multiplication, and perform the necessary weighed
     #sum to obtain the energy expectation value.
-    for pauliString in pauliStringCoefficients:
+    for pauliString in hamiltonian:
     
         alpha,beta,gamma,delta=fromParametersToCoordinates(stateParameters)
         
@@ -333,13 +453,13 @@ def theoreticalExpectationEstimation(stateParameters,pauliStringCoefficients):
             (np.dot(bra,np.matmul(operator[pauliString],ket)))
         
         theoreticalEnergyExpectation+=\
-            pauliStringCoefficients[pauliString]*expectationValue
+            hamiltonian[pauliString]*expectationValue
             
     return theoreticalEnergyExpectation
 
 ############################# Complete Algorithm #############################
 
-def vqe(initialParameters,pauliStringCoefficients,repetitions=1000,\
+def vqe(initialParameters,hamiltonian,repetitions=1000,\
         simulate=True):
     ''' 
     Returns: an OptimizeResult object consisting of the result of attempting to
@@ -351,7 +471,7 @@ def vqe(initialParameters,pauliStringCoefficients,repetitions=1000,\
     compute the theoretical result, with no circuit simulations 
     (for result checking).
     ''' 
-    global optimizing 
+    global trackOptimization
     
     # Choose maximum number of function evaluations for the optimization
     # A lower number seems to work better when running the CIRQ simulator
@@ -362,47 +482,55 @@ def vqe(initialParameters,pauliStringCoefficients,repetitions=1000,\
     
     # Select the options for the optimization
     options={
-        "disp": True,
+        #"disp": True,
         "maxfev": maxfev, # Maximum function evaluations
         "fatol": 0.05, # Acceptable absolute error in f for convergence
         "xatol": 0.1, # Acceptable absolute error in xopt for convergence
         "adaptive": True
         }
     
-    optimizing=True
+    # Choose whether to print the number of function evaluations as a 
+    #percentage of the maximum allowed to inform on the stage of the 
+    #optimization
+    trackOptimization=False
     
     # Optimize the results from the CIRQ simulation
     if(simulate):
         optResults=scipy.optimize.minimize(experimentalExpectationEstimation,\
                                 initialParameters,\
-                                (pauliStringCoefficients,repetitions),\
+                                (hamiltonian,repetitions),\
                                 method='Nelder-Mead',options=options)
                      
     # Optimize the results from theoretical computation
     else:
         optResults=scipy.optimize.minimize(theoreticalExpectationEstimation,\
-                                initialParameters,(pauliStringCoefficients),\
+                                initialParameters,(hamiltonian),\
                                     method='Nelder-Mead',
                                     options=options)
-    optimizing=False
-    # Print final parameters, obtained from optimization
-    for i in range(6):
-        
-        if i<3:
-            print(unicodedata.lookup("GREEK SMALL LETTER THETA"),i,": ",\
-                  sep="",end="")
-        else:
-            print("w",i-3,": ",sep="",end="")
+    trackOptimization=False
     
-        # Bring parameters to [0,2pi] interval
-        optimizedParameter=optResults.x[i]/np.pi
-        while (optimizedParameter<0):
-            optimizedParameter=optimizedParameter+2
-        while (optimizedParameter>2):
-            optimizedParameter=optimizedParameter-2
+    # Choose whether to print the results, for testing.
+    printResults=False
+    
+    if(printResults):
+        # Print final parameters, obtained from optimization
+        for i in range(6):
             
-        print(optimizedParameter,unicodedata.lookup("GREEK SMALL LETTER PI")\
-              ,sep="")
+            if i<3:
+                print(unicodedata.lookup("GREEK SMALL LETTER THETA"),i,": ",\
+                      sep="",end="")
+            else:
+                print("w",i-3,": ",sep="",end="")
+        
+            # Bring parameters to [0,2pi] interval
+            optimizedParameter=optResults.x[i]/np.pi
+            while (optimizedParameter<0):
+                optimizedParameter=optimizedParameter+2
+            while (optimizedParameter>2):
+                optimizedParameter=optimizedParameter-2
+                
+            print(optimizedParameter,unicodedata.lookup("GREEK SMALL LETTER PI")\
+                  ,sep="")
    
     return optResults
 
@@ -521,7 +649,7 @@ def pauliStringSTD(pauliString,repetitions):
         for _ in range(100):
                     
             experimentalExpectation=measureExpectation\
-                (pauliString,repetitions,stateParameters)
+                (pauliString,{"11":1},repetitions,stateParameters)
             
             expectationList.append(experimentalExpectation)
         
@@ -749,6 +877,7 @@ def calculateOverlap(stateCoordinates1,stateCoordinates2):
     
     return overlap
 
+
 def groundStatesFromDiagonalization(listOfHamiltonians):
     '''
     Returns: a tuple with a list of the ground energies and a list of the 
@@ -830,17 +959,24 @@ def groundStatesFromVQE(listOfHamiltonians,repetitions,runs):
     
     global count
      
-    groundEnergies=[]
-    groundStates=[]
+    medianEnergies=[]
+    medianStates=[]
+    averageEnergies=[]
     
-    for hamiltonian in listOfHamiltonians:
+    points=len(listOfHamiltonians)
+    
+    for (number,hamiltonian) in enumerate(listOfHamiltonians):
+        print("*** ",number+1,"/",points," points ***")
             
         optimizationRuns=[]
         stateArray=[]
+        attemptsList=[]
         
         for i in range(runs):
             
             success=False
+            attempts=0
+            
             while not success:
                 
                 theta0=np.pi*np.random.rand()
@@ -855,23 +991,31 @@ def groundStatesFromVQE(listOfHamiltonians,repetitions,runs):
                         repetitions=repetitions)
                 success=results.success
                 
+                attempts=attempts+1
+                
+            attemptsList.append(attempts)
             groundEnergy=results.fun
             optimizationRuns.append(groundEnergy)
             stateArray.append(results.x)
-            
-        groundEnergy=statistics.median(optimizationRuns)
-        groundEnergies.append(groundEnergy)
-        groundState=fromParametersToCoordinates\
-            (stateArray[optimizationRuns.index(groundEnergy)])
-        groundStates.append(groundState)
         
-    return(groundEnergies,groundStates)
+        print("Average number of attempts until success:",\
+              int(np.average(attemptsList)))
+        medianEnergy=statistics.median(optimizationRuns)
+        medianEnergies.append(medianEnergy)
+        medianState=fromParametersToCoordinates\
+            (stateArray[optimizationRuns.index(medianEnergy)])
+        medianStates.append(medianState)
+        
+        averageEnergy=np.average(optimizationRuns)
+        averageEnergies.append(averageEnergy)
+        
+    return(averageEnergies,medianEnergies,medianStates)
 
 ########################### Bond Dissociation Graph ###########################
 
-# Set flag to True to generate the graph.
-generateGraph=False
-
+# Set flag to True to generate the graph with the median over several VQE runs,
+#and comparison with exact ground energies and exact ground states.
+generateMedianGraph=False
 # Choose options for the graph. Will only be used if generateGraph is set
 #to True.
 
@@ -890,28 +1034,33 @@ repetitions=1000
 
 # Number of runs. If runs>1, the median over all the runs will be taken.
 # Should be an odd number.
-runs=1
+runs=3
 
-if generateGraph:
+# Generate the bond dissociation graph by taking the energy as the median over 
+#the desired number of runs, and plot the values from exact diagonalization,
+#optimization of the analytical calculation of the energy, and the VQE 
+#algorithm, along with the overlap between the exact ground state and the one
+#obtained from VQE.
+if generateMedianGraph:
 
     if (magnified):
         # Select desired window of the list of radii
-        listOfRadii=listOfRadii[(start+1):end]
-        listOfHamiltonians=listOfHamiltonians[start+1:end]
+        graphRadii=listOfRadii[(start+1):end]
+        graphHamiltonians=listOfHamiltonians[start+1:end]
         
     # Get list of ground energies and states from exact diagonalization
     exactGroundEnergies,exactGroundStates=\
-        groundStatesFromDiagonalization(listOfHamiltonians)
+        groundStatesFromDiagonalization(graphHamiltonians)
         
     # Get list of ground energies and states from optimizing the analytically
     #calculated energy
     optimizedGroundEnergies,optimizedGroundStates=\
-        groundStatesFromTheoreticalOptimization(listOfHamiltonians,runs)
+        groundStatesFromTheoreticalOptimization(graphHamiltonians,runs)
     
     # Get list of ground energies and states from optimizing the energy
     #obtained from simulating the circuit
-    groundEnergiesVQE,groundStatesVQE=\
-        groundStatesFromVQE(listOfHamiltonians,repetitions,runs)
+    groundEnergiesAverage,groundEnergiesVQE,groundStatesVQE=\
+        groundStatesFromVQE(graphHamiltonians,repetitions,runs)
             
     # Calculate overlaps between the ground state obtained in VQE and the one
     #obtained from exact diagonalization
@@ -928,17 +1077,80 @@ if generateGraph:
     
     axs[0].set_ylabel('Ground Energy (MJ mol$^{-1}$)')
         
-    theoretical=axs[0].scatter(listOfRadii,optimizedGroundEnergies,marker='o',\
+    theoretical=axs[0].scatter(graphRadii,optimizedGroundEnergies,marker='o',\
                                color='silver')
     
-    experimental=axs[0].scatter(listOfRadii,groundEnergiesVQE,marker='x',\
+    experimental=axs[0].scatter(graphRadii,groundEnergiesVQE,marker='x',\
                                 color='b')
     
-    exact=axs[0].plot(listOfRadii,exactGroundEnergies,color='r')
+    exact=axs[0].plot(graphRadii,exactGroundEnergies,color='r')
     
     axs[0].legend([theoretical,experimental,exact[0]],\
                   ['Theoretical QEE','Experimental QEE','Exact Diagonalization'])
         
-    axs[1].plot(listOfRadii,overlapList)
+    axs[1].plot(graphRadii,overlapList)
     
+    plt.show()
+    
+# Set flag to True to generate the graph with the median vs the average for 
+#calculation of the energy through the VQE algorithm.
+generateMedianvsAverageGraph=False
+
+# Choose options for the graph. Will only be used if generateGraph is set
+#to True.
+
+# Boolean flag to signal the choice of zooming in (or not) on the most
+#important region
+magnified=True
+
+# Limits of the list of radii whose ground states will be computed. 
+# Only used if the flag 'magnified' is set to True.
+start=10
+end=50
+
+# Number of shots to be used in obtaining the expectation values using the
+#CIRQ simulator
+repetitions=1000
+
+# Number of runs over which to take the median and the average.
+# Should be an odd number.
+runs=11
+
+# Generate the bond dissociation graph by taking the energy as the median over 
+#the desired number of runs, and plot the values from exact diagonalization,
+#optimization of the analytical calculation of the energy, and the VQE 
+#algorithm, along with the overlap between the exact ground state and the one
+#obtained from VQE.
+if generateMedianvsAverageGraph:
+
+    if (magnified):
+        # Select desired window of the list of radii
+        graphRadii=listOfRadii[(start+1):end]
+        graphHamiltonians=listOfHamiltonians[start+1:end]
+        
+    # Get list of ground energies and states from exact diagonalization
+    exactGroundEnergies,exactGroundStates=\
+        groundStatesFromDiagonalization(graphHamiltonians)
+        
+
+    # Get list of ground energies and states from optimizing the energy
+    #obtained from simulating the circuit
+    groundEnergiesAverage,groundEnergiesMedian,groundStatesVQE=\
+        groundStatesFromVQE(graphHamiltonians,repetitions,runs)
+            
+    plt.figure(figsize=[8,8])
+    plt.xlabel('Atomic Separation (pm)')
+    plt.ylabel('Ground Energy (MJ mol$^{-1}$)')
+    plt.suptitle('Bond Dissociation Curve of He-H$^+$: Median vs Average \n('\
+                 +str(repetitions)+' shots, '+str(runs)+" runs)")
+        
+    exact,=plt.plot(graphRadii,exactGroundEnergies,color='r',label='Exact')
+    
+    median=plt.scatter(graphRadii,groundEnergiesMedian,marker='x',\
+                  color='b',label='Median')
+        
+    average=plt.scatter(graphRadii,groundEnergiesAverage,marker='x',\
+                  color='k',label='Average')
+        
+    plt.legend(handles=[exact,median,average])
     plt.show()
