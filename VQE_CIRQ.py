@@ -460,16 +460,20 @@ def theoreticalExpectationEstimation(stateParameters,hamiltonian):
 ############################# Complete Algorithm #############################
 
 def vqe(initialParameters,hamiltonian,repetitions=1000,\
-        simulate=True):
+        optTolerance=(0.07700387,0.12576108),delta=0.70966797,simulate=True):
     ''' 
     Returns: an OptimizeResult object consisting of the result of attempting to
     minimize the expectation value of the energy by using the VQE algorithm.
     Arguments: a list with the initial guess for the 6 parameters, the 
     Hamiltonian as a dictionary whose keys are Pauli strings and values the 
     respective coefficients, the number of repetitions for the expectation 
-    estimation, and a boolean flag 'simulate' that should be set to False to 
-    compute the theoretical result, with no circuit simulations 
-    (for result checking).
+    estimation, a tuple optTolerance=(fatol,xatol) for the optimization using
+    Nelder Mead, the parameter delta which will be used along with 
+    initialParameters to create the initial simplex, and a boolean flag 
+    'simulate' that should be set to False to compute the theoretical result, 
+    with no circuit simulations (for result checking).
+    Default values for optTolerance, delta are optimized for default 
+    repetitions.
     ''' 
     global trackOptimization
     
@@ -479,14 +483,23 @@ def vqe(initialParameters,hamiltonian,repetitions=1000,\
         maxfev=300
     else:
         maxfev=1000
+        
+    fatol,xatol=optTolerance
+    
+    dim=len(initialParameters)
+    initialSimplex=np.array([initialParameters,]*(dim+1))
+    
+    for i in range(dim):
+        initialSimplex[i+1][i]+=delta
     
     # Select the options for the optimization
     options={
         #"disp": True,
         "maxfev": maxfev, # Maximum function evaluations
-        "fatol": 0.05, # Acceptable absolute error in f for convergence
-        "xatol": 0.1, # Acceptable absolute error in xopt for convergence
-        "adaptive": True
+        "fatol": fatol, # Acceptable absolute error in f for convergence
+        "xatol": xatol, # Acceptable absolute error in xopt for convergence
+        "adaptive": True,
+        "initial_simplex": initialSimplex
         }
     
     # Choose whether to print the number of function evaluations as a 
@@ -791,7 +804,7 @@ numberOfTests = 1000
 repetitions = 100
 
 # Choose number of shots to be used in the expectation estimation tests
-repetitionsQEE = 100
+repetitionsQEE = 1000
 
 # Choose hamiltonian to be used in the expectation estimation tests
 hamiltonian=hamiltonian90
@@ -841,7 +854,7 @@ if testQEE:
     # By testing the full QEE function 
     error,std=testExpectationEstimation(repetitionsQEE,hamiltonian)
     
-    print("***Testing the expectation estimation for",repetitions,"shots***")
+    print("***Testing the expectation estimation for",repetitionsQEE,"shots***")
     print("By testing the full function:")
     print("Obtained error",error,"and standard deviation",std)
     
@@ -850,7 +863,6 @@ if testQEE:
     dictOfSTD=dictOfSTD(repetitionsQEE,listOfPauliStrings)
     print("By propagating the error:")
     print("Obtained error",errorPropagation(dictOfSTD,hamiltonian))
-    
     # Propagate error for all points in the bond dissociation curve
     errorList=[]
     
@@ -901,7 +913,7 @@ def groundStatesFromDiagonalization(listOfHamiltonians):
         exactGroundStates.append(v[np.argmin(w)])
         
     return(exactGroundEnergies,exactGroundStates)
-            
+
 def groundStatesFromTheoreticalOptimization(listOfHamiltonians,runs):
     '''
     Returns: a tuple with a list of the ground energies and a list of the 
@@ -1034,14 +1046,16 @@ repetitions=1000
 
 # Number of runs. If runs>1, the median over all the runs will be taken.
 # Should be an odd number.
-runs=3
+runs=1
 
 # Generate the bond dissociation graph by taking the energy as the median over 
 #the desired number of runs, and plot the values from exact diagonalization,
-#optimization of the analytical calculation of the energy, and the VQE 
-#algorithm, along with the overlap between the exact ground state and the one
-#obtained from VQE.
+#optimization of the analytical calculation of the energy (if desired), and the
+# VQE algorithm, along with the overlap between the exact ground state and the
+#one obtained from VQE.
 if generateMedianGraph:
+
+    plotTheoreticalVQE=False
 
     if (magnified):
         # Select desired window of the list of radii
@@ -1051,11 +1065,12 @@ if generateMedianGraph:
     # Get list of ground energies and states from exact diagonalization
     exactGroundEnergies,exactGroundStates=\
         groundStatesFromDiagonalization(graphHamiltonians)
-        
-    # Get list of ground energies and states from optimizing the analytically
-    #calculated energy
-    optimizedGroundEnergies,optimizedGroundStates=\
-        groundStatesFromTheoreticalOptimization(graphHamiltonians,runs)
+    
+    if plotTheoreticalVQE:
+      # Get list of ground energies and states from optimizing the analytically
+      #calculated energy
+      optimizedGroundEnergies,optimizedGroundStates=\
+          groundStatesFromTheoreticalOptimization(graphHamiltonians,runs)
     
     # Get list of ground energies and states from optimizing the energy
     #obtained from simulating the circuit
@@ -1070,14 +1085,15 @@ if generateMedianGraph:
     
     f,axs=plt.subplots(2,figsize=[8,8],constrained_layout=True,sharex=True)
     plt.suptitle('Bond Dissociation Curve of He-H$^+$ ('+str(repetitions)+\
-                 ' repetitions in QEE)')
+                 ' shots in QEE)')
     
     axs[1].set_xlabel('Atomic Separation (pm)')
     axs[1].set_ylabel('State Overlap')
     
     axs[0].set_ylabel('Ground Energy (MJ mol$^{-1}$)')
-        
-    theoretical=axs[0].scatter(graphRadii,optimizedGroundEnergies,marker='o',\
+    
+    if plotTheoreticalVQE:
+      theoretical=axs[0].scatter(graphRadii,optimizedGroundEnergies,marker='o',\
                                color='silver')
     
     experimental=axs[0].scatter(graphRadii,groundEnergiesVQE,marker='x',\
@@ -1085,8 +1101,13 @@ if generateMedianGraph:
     
     exact=axs[0].plot(graphRadii,exactGroundEnergies,color='r')
     
-    axs[0].legend([theoretical,experimental,exact[0]],\
+    if plotTheoreticalVQE:
+      axs[0].legend([theoretical,experimental,exact[0]],\
                   ['Theoretical QEE','Experimental QEE','Exact Diagonalization'])
+      
+    else:
+      axs[0].legend([experimental,exact[0]],\
+                  ['VQE','Exact Diagonalization'])
         
     axs[1].plot(graphRadii,overlapList)
     
@@ -1147,10 +1168,166 @@ if generateMedianvsAverageGraph:
     exact,=plt.plot(graphRadii,exactGroundEnergies,color='r',label='Exact')
     
     median=plt.scatter(graphRadii,groundEnergiesMedian,marker='x',\
-                  color='b',label='Median')
+                  color='b',label='VQE Median')
         
     average=plt.scatter(graphRadii,groundEnergiesAverage,marker='x',\
-                  color='k',label='Average')
+                  color='k',label='VQE Average')
         
     plt.legend(handles=[exact,median,average])
     plt.show()
+    
+########################## Optimizing Nelder Mead VQE #########################
+
+def overlapNM(initialParameters,hamiltonian,repetitions=1000,\
+              optTolerance=(0.05,0.1),delta=0.1):
+    '''
+    Returns: a tuple (overlap, attempts). The first element is the overlap  
+    between the ground state obtained from VQE and the exact state (obtained 
+    from diagonalization). The second is the total number of attempts that it 
+    took for the classical optimization to converge.
+    Arguments: the initial parameters that specify the first state to prepare
+    in VQE, the hamiltonian whose ground state we wish to find, the number of
+    repetitions for QEE, a tuple optTolerance=(fatol,xatol) for the 
+    optimization, the parameter delta which will be used along with 
+    initialParameters to create the initial simplex.
+    '''
+    
+    success=False
+    attempts=0
+    
+    # Call the vqe function until the classical optimization succeeds to 
+    #converge
+    while not success:
+        optResults=vqe(initialParameters,hamiltonian,repetitions,optTolerance,\
+                       delta)
+        success=optResults.success
+        attempts+=1
+    
+    # Get the exact solution from diagonalization
+    (exactGroundEnergies,exactGroundStates)=\
+        groundStatesFromDiagonalization([hamiltonian])
+   
+    # Calculate the overlap between the VQE and exact states
+    groundStateVQE=fromParametersToCoordinates(optResults.x)
+    overlap=calculateOverlap(groundStateVQE,exactGroundStates[0])
+    
+    return (overlap,attempts)
+
+def costFunction(repetitions,iterations,optTolerance=(0.05,0.1),delta=0.1):
+    '''
+    Returns: the value of a cost function that weighs the success of VQE in
+    converging to the ground state, and the number of attempts that it took
+    for the classical optimization to converge.
+    Arguments: the number of repetitions for QEE, the number of iterations
+    over which the average cost should be calculated, a tuple 
+    optTolerance=(fatol,xatol) for the optimization, the parameter delta which 
+    will be used along with initialParameters to create the initial simplex.
+    '''
+    
+    global i
+    
+    print("\nfunction evaluation",i)
+    i+=1
+    print("fatol, xatol:",optTolerance)
+    print("delta:",delta)
+    
+    # If fatol, xatol or delta are negative, return a large cost to trick the
+    #optimization into avoiding negative values (that cause the optimization
+    #not to stop)
+    # Necessary because COBYLA doesn't accept bounds
+    if(optTolerance[0]<0 or optTolerance[1]<0 or delta<0):
+        return 1000
+    
+    totalAttempts=0
+    badResults=0
+    sumOverlaps=0
+    
+    # Call the VQE function as many times as required by the 'iterations' 
+    #argument
+    for i in range(iterations):
+        print(i)
+        theta0=np.pi*np.random.rand()
+        theta1=np.pi*np.random.rand()
+        theta2=np.pi*np.random.rand()
+        w0=2*np.pi*np.random.rand()
+        w1=2*np.pi*np.random.rand()
+        w2=2*np.pi*np.random.rand()
+                    
+        initialParameters=[theta0,theta1,theta2,w0,w1,w2]
+    
+        hamiltonian=np.random.choice(listOfHamiltonians)
+        
+        overlap,attempts=overlapNM(initialParameters,hamiltonian,repetitions,\
+                                       optTolerance,delta)
+        print(attempts)
+        totalAttempts+=attempts
+        sumOverlaps+=overlap
+        
+        if overlap<0.9:
+            badResults+=1
+    
+    # Minimize average overlap. Better cost function for optimizing delta,
+    #that affects the overlap the most
+    cost=-sumOverlaps
+    
+    # Alternatives: minimize bad results (overlaps <90%) and total attempts, 
+    #or total attempts only.
+    #Better cost functions for optimizing optParameters=(fatol,xatol), which
+    #affect mostly the number of attempts until convergence.
+    #cost=badResults*2+totalAttempts
+    #cost=totalAttempts
+    
+    print("Bad results:",badResults)
+    print("Total attempts:",totalAttempts)
+    print("Average overlap:",sumOverlaps/iterations)
+    print("Value of Cost Function:",cost)
+    
+    return cost
+
+# Set flags to true to optimize tolerance for convergence in Nelder Mead VQE
+#or delta, which affects the initial simplex size.
+optimizeTolerance=False
+optimizeDelta=False
+
+if optimizeTolerance:
+    # Optimize (fatol,xatol) to improve performance of Nelder Mead VQE
+    # Affects mostly number of attempts until convergence
+    
+    options={
+            "disp": True,
+            "rhobeg": 0.02 # Reasonable initial changes to the variables
+            }
+    
+    repetitions=1000
+    iterations=5
+    initialOptTolerance=(0.05,0.1)
+    delta=0.1
+    i = 1
+    
+    optResults=scipy.optimize.minimize\
+        (lambda x : costFunction(repetitions,iterations,x),initialOptTolerance,\
+         method='COBYLA',options=options)
+            
+    print(optResults)
+    
+if optimizeDelta:
+    # Optimize delta to improve performance of Nelder Mead VQE
+    # Affects mostly average overlap, with a sizeable effect of the number of
+    #attempts until convergence if (fatol,xatol) aren't ideal
+    
+    options={
+            "disp": True,
+            "rhobeg": 0.3 # Reasonable initial changes to the variables
+            }
+    
+    repetitions=1000
+    iterations=10
+    initialDelta=0.1
+    optParameters=(0.07700387,0.12576108)
+    i = 1
+    
+    optResults=scipy.optimize.minimize\
+        (lambda x : costFunction(repetitions,iterations,optParameters,x),\
+         initialDelta,method='COBYLA',options=options)
+        
+    print(optResults)
