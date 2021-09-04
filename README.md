@@ -8,7 +8,7 @@ Dissertation Project
 Implementation of Adapt VQE ([1][2]), using the CIRQ simulator for the evaluation of both the energy and the gradient, and OpenFermion, PySCF and their plug-in for the chemistry part.
 Includes:
 - A noise free, matrix algebra based version of the algorithm.
-- The possibility of removing terms.
+- The possibility of removing terms or growing the ansatz conservatively (multiple optimization attempts per iteration).
 - Multiple pool options (the ones used in Qubit Adapt [1] and Fermionic Adapt [2], and others).
 - Functions to estimate the required numer of CNOTs.
 - Functions to examine the Slater determinants in the state.
@@ -50,9 +50,10 @@ Current values were result of using a cost function penalizing overlaps with the
 
 ### Qiskit_AdaptVQE
 Implementation of the Adapt VQE algorithm, using Qiskit for evaluation of the energy, and OpenFermion, PySCF and their plug-in for the chemistry part.
-- A noise free, matrix algebra based version of the algorithm.
+- A noise free, matrix algebra based version of the algorithm..
+- Noise models for thermal relaxation, SPAM noise,... 
 - Qubit Adapt [1] and Fermionic Adapt [2] pools.
-- Plot for the evolution of the energy.
+- Plot for the evolution of the energy
 - Trotterization of OpenFermion's QubitOperator into Qiskit circuits.
 - Transformation of OpenFermion's Hamiltonian into Qiskit Aqua observables.
 
@@ -60,7 +61,8 @@ Implementation of the Adapt VQE algorithm, using Qiskit for evaluation of the en
 ### Qiskit_UCCSD_VQE
 Implementation of VQE with the unitary coupled cluster singles and doubles ansatz, using Qiskit for the energy expectation, and PySCF and its Qiskit Driver for the chemistry part.
 Includes:
-- A noise free, matrix algebra based version of the algorithm.
+- A noise free, matrix algebra based version of the algorithm..
+- Noise models for thermal relaxation, SPAM noise,... 
 - Numerical results.
 - A plot of the evolution of the energy along the optimization.
 
