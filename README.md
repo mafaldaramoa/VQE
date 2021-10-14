@@ -1,5 +1,5 @@
 # Ansatze for noisy variational quantum eigensolvers
-Dissertation Project
+Mafalda's Masters Project
 
 ## Files
 
