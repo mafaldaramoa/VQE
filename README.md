@@ -1,6 +1,8 @@
 # Ansatze for noisy variational quantum eigensolvers
 Mafalda Ramôa Alves
+
 Masters Project
+
 Integrated Masters in Engineering Physics - Physics of Information (University of Minho)
 
 ## Files
