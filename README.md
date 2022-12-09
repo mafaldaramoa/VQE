@@ -1,9 +1,9 @@
-# Ansatze for noisy variational quantum eigensolvers
-Mafalda Ramôa Alves
+# Ansätze for noisy variational quantum eigensolvers
+Mafalda Ramôa
 
-Masters Project
+This repository contains the code I developed for my thesis, submitted for the degree of Master of Science in the Engineering Physics course at University of Minho (Physics of Information branch).
 
-Integrated Masters in Engineering Physics - Physics of Information (University of Minho)
+[You can access the thesis on arXiv.](https://arxiv.org/abs/2212.04323)
 
 ## Files
 
